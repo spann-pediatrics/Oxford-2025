@@ -254,6 +254,41 @@ st.divider()
 # --- Delivery Method x Primiparity: tidy, consistent visuals + stats ---
 st.markdown("## Birth Demographics")
 
+
+# ---------- Render KPI cards ----------
+c1, c2, c3 = st.columns(3)
+
+with c1:
+    st.metric(
+        label="C-Section Births",
+        value=(
+            f"{(df['Csection'] == 'Yes').sum()/ len(df) *100:.0f}%"
+            if 'Csection' in df.columns else "N/A"
+        )
+    )
+
+with c2:
+    st.metric(
+        label="Epidural Births",
+        value=(
+            f"{(df['Epidural'] == 'Yes').sum()/ len(df) *100:.0f}%"
+            if 'Epidural' in df.columns else "N/A"
+        )
+    )
+
+with c3:
+    st.metric(
+        label="Oxytoxin Used At Birth",
+        value=(
+            f"{(df['Oxytocin_labour'] == 'Yes').sum()/ len(df) *100:.0f}%"
+            if 'Oxytocin_labour' in df.columns else "N/A"
+        )
+    )
+
+
+
+
+
 # 0) Clean columns (safe reassign)
 df = df.copy()
 df["Delivery Method"] = df["Delivery Method"].astype(str).str.strip()
@@ -937,3 +972,37 @@ with k2:
         label="Participants with ≥3 milk collection days (1–6)",
         value=str(n_3plus)
     )
+
+
+
+# --- Cupsize bar chart (counts from hmo) ---
+cup_counts = (
+    df["Cupsize"]
+    .fillna("Missing")
+    .astype(str)
+    .str.strip()
+    .value_counts()
+    .reset_index()
+)
+cup_counts.columns = ["Cupsize", "Count"]
+
+fig = px.bar(
+    cup_counts.sort_values("Count", ascending=False),
+    x="Cupsize",
+    y="Count",
+    text="Count",
+    color="Cupsize",
+    color_discrete_sequence=px.colors.qualitative.Pastel,
+    title="Milk Sample Cup Sizes",
+    labels={"Cupsize": "Cup Size", "Count": "Count"},
+)
+
+fig.update_traces(textposition="outside")
+fig.update_layout(
+    height=400,
+    showlegend=False,
+    margin=dict(l=10, r=10, t=50, b=10),
+    xaxis_tickangle=-25,
+)
+
+st.plotly_chart(fig, use_container_width=True)
