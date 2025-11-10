@@ -49,7 +49,7 @@ with col3:
 with col4:
     st.metric("Transitional Milk Samples (Day 5)", int(n_transition))
 with col5:
-    st.metric("Mature Milk Samples (Day 6)", int(n_mature))
+    st.metric("Mature Milk Samples (Day 24+)", int(n_mature))
 
 st.divider()
 
@@ -998,7 +998,7 @@ fig = px.bar(
     text="Count",
     color="Cupsize",
     color_discrete_sequence=px.colors.qualitative.Pastel,
-    title="Milk Sample Cup Sizes",
+    title="Maternal Cup Size Change",
     labels={"Cupsize": "Cup Size", "Count": "Count"},
 )
 
@@ -1011,3 +1011,5 @@ fig.update_layout(
 )
 
 st.plotly_chart(fig, use_container_width=True)
+
+

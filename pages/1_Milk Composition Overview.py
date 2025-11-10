@@ -43,7 +43,7 @@ with col3:
 with col4:
     st.metric("Transitional Milk Samples (Day 5)", int(n_transition))
 with col5:
-    st.metric("Mature Milk Samples (Day 6)", int(n_mature))
+    st.metric("Mature Milk Samples (Day 24+)", int(n_mature))
 
 st.divider()
 
@@ -246,7 +246,7 @@ st.altair_chart(chart, use_container_width=True)
 
 # --- Additional chart using the same filtered data ---
 
-st.markdown(f"### Average HMO {'Concentration' if view_is_ug else 'Relative Abundance'} by PP day")
+st.markdown(f"### Average HMO {'Concentration' if view_is_ug else 'Relative Abundance'} by Day of Collection")
 
 # Calculate averages per day
 avg_by_day = (
@@ -351,3 +351,158 @@ box_chart = (
 )
 
 st.altair_chart(box_chart, use_container_width=True)
+
+
+
+
+st.divider()
+
+#### KPI cards showing how many participants provided day 1-6 samples & # participants who provided >3 time points
+
+ID_COL   = "Participant ID"   # <-- change if your id col differs
+DAY_COL  = "PP_day_num"
+# HMO_COLS = [c for c in hmo.columns if "µg/mL" in c]  # HMO concentration columns
+
+# --- Stage definitions ---
+COLOSTRUM_DAYS = [1,2,3,4,5]
+MATURE_DAY     = 6
+
+# --- Per-stage participant means ---
+colostrum = (
+    hmo[hmo[DAY_COL].isin(COLOSTRUM_DAYS)]
+      .groupby(ID_COL)[UG_ALL].mean()
+      .add_suffix("_col")
+)
+
+mature = (
+    hmo[hmo[DAY_COL] == MATURE_DAY]
+      .groupby(ID_COL)[UG_ALL].mean()
+      .add_suffix("_mat")
+)
+
+# Only participants who have at least one stage value will appear; we want those with BOTH
+paired = colostrum.join(mature, how="inner")
+
+# --- Overall paired participants KPI (across any HMO) ---
+# A participant is "paired" if they have BOTH a colostrum AND a mature value for at least one HMO
+has_any_pair = pd.Series(False, index=paired.index)
+for h in UG_ALL:
+    a = paired.get(f"{h}_col")
+    b = paired.get(f"{h}_mat")
+    if a is None or b is None:
+        continue
+    has_any_pair = has_any_pair | (a.notna() & b.notna())
+
+n_paired_participants = int(has_any_pair.sum())
+n_total_participants  = int(hmo[ID_COL].nunique())
+pct = (100 * n_paired_participants / n_total_participants) if n_total_participants else 0.0
+
+# --- KPI cards side-by-side ---
+k1, k2 = st.columns(2, gap="large")
+
+with k1: 
+    st.metric(
+        label="Participants with paired HMO samples (colostrum 1–5 & mature 6)",
+        value=str(n_paired_participants)
+    )
+
+
+# --- KPI: participants with >=3 distinct time points among days 1..6 ---
+# clean types and restrict to valid days
+hmo[DAY_COL] = pd.to_numeric(hmo[DAY_COL], errors="coerce")
+valid = (
+    hmo[[ID_COL, DAY_COL]]
+    .dropna(subset=[ID_COL, DAY_COL])
+)
+valid = valid[valid[DAY_COL].between(1, 6)]
+
+# one row per (ID, day), then count unique days per participant
+per_id_day_counts = (
+    valid.drop_duplicates([ID_COL, DAY_COL])
+         .groupby(ID_COL)[DAY_COL]
+         .nunique()
+)
+
+n_3plus = int((per_id_day_counts >= 3).sum())
+n_total_participants = int(hmo[ID_COL].nunique())
+pct_3plus = (100 * n_3plus / n_total_participants) if n_total_participants else 0.0
+
+with k2:
+    st.metric(
+        label="Participants with ≥3 milk collection days (1–6)",
+        value=str(n_3plus)
+    )
+
+
+
+
+
+st.markdown(f"### Participants 3+ TimePoints: Average HMO {'Concentration' if view_is_ug else 'Relative Abundance'} by Day of Collection")
+
+
+# --- Eligible participants (≥3 distinct PP days among 1..6) ---
+ID_COL  = "Participant ID"
+DAY_COL = "PP_day_num"
+
+# Count distinct days per participant
+eligible_counts = (
+    hmo[hmo[DAY_COL].between(1, 6)]
+      .dropna(subset=[ID_COL, DAY_COL])
+      .drop_duplicates([ID_COL, DAY_COL])
+      .groupby(ID_COL)[DAY_COL]
+      .nunique()
+)
+
+# Keep only participants with ≥3 days
+eligible_counts = eligible_counts[eligible_counts >= 3].sort_index()
+
+# Prepare labels like "P12 — 5 days"
+participant_labels = [f"{pid} — {n} days" for pid, n in eligible_counts.items()]
+
+# Build a mapping between label and ID (so you can get back the real ID)
+label_to_id = dict(zip(participant_labels, eligible_counts.index))
+
+# --- Dropdown with days shown next to ID ---
+selected_label = st.selectbox(
+    "Select participant (≥3 days):",
+    options=["All eligible"] + participant_labels,
+    index=0
+)
+
+# Convert label back to real participant ID (or None if "All")
+selected_id = label_to_id.get(selected_label, None)
+
+
+
+# --- Apply selection ---
+if selected_id:
+    filt_for_avg = filt[filt[ID_COL] == selected_id].copy()
+else:
+    filt_for_avg = filt[filt[ID_COL].isin(eligible_counts.index)].copy()
+
+
+if filt_for_avg.empty:
+    st.info("No data after applying participant selection. Try a different choice.")
+else:
+    # Calculate averages per day (or per participant if single)
+    avg_by_day = (
+        filt_for_avg.groupby(PPDAY_COL)[value_cols]
+        .mean()
+        .reset_index()
+        .melt(id_vars=PPDAY_COL, var_name="HMO", value_name=VALUE_COL)
+    )
+
+    avg_chart = (
+        alt.Chart(avg_by_day)
+        .mark_bar()
+        .encode(
+            x=alt.X(f"{PPDAY_COL}:O", title="PP day"),
+            y=alt.Y(f"{VALUE_COL}:Q", title=VALUE_COL),
+            color=alt.Color("HMO:N", legend=alt.Legend(title="HMO")),
+            tooltip=[PPDAY_COL, "HMO", VALUE_COL]
+        )
+        .properties(height=400)
+        .interactive()
+    )
+
+    st.altair_chart(avg_chart, use_container_width=True)
