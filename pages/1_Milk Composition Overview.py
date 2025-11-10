@@ -10,6 +10,7 @@ import statsmodels.formula.api as smf
 from scipy.stats import shapiro, kruskal
 import plotly.graph_objects as go
 import io
+import altair as alt
 
 
 st.set_page_config(page_title="Milk Composition Overview", layout="wide")
@@ -18,12 +19,13 @@ st.title(' Milk Composition')
 hmo = pd.read_excel("/Users/kspann/Desktop/Oxford/Cleaned Data/HMO/hmo_data_oxford.xlsx")
 
 # Define categories
-n_colostrum = hmo[hmo["PP_day_num"].between(1, 5, inclusive="both")].shape[0]
+n_colostrum = hmo[hmo["PP_day_num"].between(1, 4, inclusive="both")].shape[0]
+n_transition = (hmo["PP_day_num"] == 5).sum()
 n_mature = (hmo["PP_day_num"] == 6).sum()
 
 
 # Create 3 equal-width columns for layout (you can change the number)
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 
 # Show the unique participant count as a card
 with col1:
@@ -37,187 +39,315 @@ with col2:
         value=int(hmo.shape[0])
    )  
 with col3:
-    st.metric("Colostrum Samples (Day 1-5)", int(n_colostrum))
+    st.metric("Colostrum Samples (Day 1-4)", int(n_colostrum))
 with col4:
+    st.metric("Transitional Milk Samples (Day 5)", int(n_transition))
+with col5:
     st.metric("Mature Milk Samples (Day 6)", int(n_mature))
 
 st.divider()
 
 
 
+########## HMO Graphs ##################
+
 # ---- Identify columns ----
-# Required identifiers (best effort)
-# ---- Identify columns ----
-id_cols = [c for c in ["Sample Name", "Participant ID", "PP day", "secretor_status", "PP_day_num"] if c in hmo.columns]
 
-# HMO columns with µg/mL
-hmo_cols = [c for c in hmo.columns if "(µg/mL)" in c]
-has_sum_ug = "SUM (µg/mL)" in hmo.columns
+ID_COL = "Sample Name"        # each bar = one milk sample
+PARTICIPANT_COL = "Participant ID" 
+PPDAY_COL = "PP_day_num"      # postpartum day
+SECRETOR_COL = "secretor_status"
+
+# ---- Exact column lists based on your file ----
+UG_ALL = [
+    '2FL (µg/mL)', '3FL (µg/mL)', 'DFLac (µg/mL)', '3SL (µg/mL)', '6SL (µg/mL)',
+    'LNT (µg/mL)', 'LNnT (µg/mL)', 'LNFP I (µg/mL)', 'LNFP II (µg/mL)',
+    'LNFP III (µg/mL)', 'LSTb (µg/mL)', 'LSTc (µg/mL)', 'DFLNT (µg/mL)',
+    'LNH (µg/mL)', 'DSLNT (µg/mL)', 'FLNH (µg/mL)', 'DFLNH (µg/mL)',
+    'FDSLNH (µg/mL)', 'DSLNH (µg/mL)'
+]
+UG_SUM = 'SUM (µg/mL)'
+
+PCT_ALL = [
+    '2FL (%)', '3FL (%)', 'DFLac (%)', '3SL (%)', '6SL (%)',
+    'LNT (%)', 'LNnT (%)', 'LNFP I (%)', 'LNFP II (%)', 'LNFP III (%)',
+    'LSTb (%)', 'LSTc (%)', 'DFLNT (%)', 'LNH (%)', 'DSLNT (%)',
+    'FLNH (%)', 'DFLNH (%)', 'FDSLNH (%)', 'DSLNH (%)'
+]
+PCT_SUM = 'SUM (%)'
 
 
-# Canonical HMO order (exact Excel column order)
-hmo_order = [c for c in hmo.columns if "(µg/mL)" in c]
-if not hmo_order:
-    st.error("No HMO (µg/mL) columns found.")
-    st.stop()
+# =======================================
+# 2) Type hygiene (once, on the raw frame)
+# =======================================
+# Assumes your DataFrame is named `hmo`
+hmo = hmo.copy()
+
+# Ensure identifier columns exist
+for req in [ID_COL, SECRETOR_COL, PPDAY_COL]:
+    if req not in hmo.columns:
+        st.error(f"Required column missing: {req}")
+        st.stop()
+
+# Coerce filters to numeric
+hmo[SECRETOR_COL] = pd.to_numeric(hmo[SECRETOR_COL], errors="coerce")
+hmo[PPDAY_COL]    = pd.to_numeric(hmo[PPDAY_COL], errors="coerce")
 
 
-if len(hmo_cols) == 0:
-    st.error("Could not find any columns containing '(µg/mL)'. Please check your file.")
-    st.stop()
+# ==========================
+# 3) Sidebar: user controls
+# ==========================
+with st.sidebar:
+    st.subheader("Filters")
 
-# ---- Sidebar controls ----
-st.sidebar.header("Filters")
-
-# Secretor filter
-if "secretor_status" in hmo.columns:
-    secretor_map = {1: "Secretor", 0: "Non-secretor"}
-    secretor_choice = st.sidebar.multiselect(
+    sec_label = st.selectbox(
         "Secretor status",
-        options=["Secretor", "Non-secretor"],
-        default=["Secretor", "Non-secretor"]
+        ["All", "Secretor", "Non-secretor"],
+        index=0
     )
-else:
-    secretor_choice = None
 
-# PP day filter (use PP_day_num consistently; fall back to PP day if needed)
-pp_col = "PP_day_num" if "PP_day_num" in hmo.columns else ("PP day" if "PP day" in hmo.columns else None)
-if pp_col is not None:
-    pp_numeric_all = pd.to_numeric(hmo[pp_col], errors="coerce")
-    pp_min, pp_max = int(np.nanmin(pp_numeric_all)), int(np.nanmax(pp_numeric_all))
-    pp_range = st.sidebar.slider("Postpartum day range", min_value=pp_min, max_value=pp_max, value=(pp_min, pp_max))
-else:
-    pp_range = None
-
-# Sidebar: Heatmap options
-include_sum = False
-has_sum_ug = "SUM (µg/mL)" in hmo.columns
-if has_sum_ug:
-    include_sum = st.sidebar.toggle("Include 'SUM (µg/mL)'", value=False)
-
-# Keep Excel order; optionally drop SUM while preserving order
-available_hmos = [c for c in hmo_order if (include_sum or c != "SUM (µg/mL)")]
-
-selected_hmos = st.sidebar.multiselect(
-    "Select HMOs (µg/mL)",
-    options=available_hmos,        # preserves Excel order
-    default=available_hmos         # select ALL by default
-)
-if not selected_hmos:
-    st.warning("Please select at least one HMO column.")
-    st.stop()
-
-norm = st.sidebar.selectbox(
-    "Normalization",
-    ["Log10(x+1)", "Row Z-score", "Column Z-score", "Column Min-Max (0–1)"],
-    index=1
-)
-
-agg_level = st.sidebar.radio(
-    "Rows represent",
-    ["Sample Name (each sample)", "Participant ID (aggregate)"],
-    index=0
-)
-agg_func = st.sidebar.selectbox("Aggregation (when aggregating by Participant)", ["mean", "median"], index=0)
-
-cluster = st.sidebar.toggle("Cluster rows/columns", value=True)
-cluster_rows = st.sidebar.toggle("Cluster rows", value=True, disabled=(not cluster))
-cluster_cols = st.sidebar.toggle("Cluster columns", value=False, disabled=(not cluster))
-
-fig_w = st.sidebar.slider("Figure width", 6, 22, 12)
-fig_h = st.sidebar.slider("Figure height", 4, 20, 8)
-
-# ---- Apply filters ----
-df_filt = hmo.copy()
-
-if secretor_choice is not None:
-    labels = df_filt["secretor_status"].map(secretor_map) if df_filt["secretor_status"].dtype != "O" else df_filt["secretor_status"]
-    df_filt = df_filt[labels.isin(secretor_choice)]
-
-if pp_range is not None:
-    pp_numeric = pd.to_numeric(df_filt[pp_col], errors="coerce")
-    df_filt = df_filt[(pp_numeric >= pp_range[0]) & (pp_numeric <= pp_range[1])]
-
-
-# ---- Build matrix ----
-show_cols = selected_hmos
-if len(show_cols) == 0:
-    st.warning("Please select at least one HMO column to display.")
-    st.stop()
-
-if agg_level.startswith("Sample Name") and "Sample Name" in df_filt.columns:
-    index_col = "Sample Name"
-elif agg_level.startswith("Participant ID") and "Participant ID" in df_filt.columns:
-    index_col = "Participant ID"
-else:
-    index_col = None
-
-mat_df = df_filt[[c for c in [index_col] + show_cols if c is not None]].copy()
-
-if index_col == "Participant ID":
-    mat_df = (mat_df.groupby("Participant ID", as_index=True)[show_cols]
-                     .agg("mean" if agg_func == "mean" else "median", numeric_only=True))
-else:
-    mat_df = mat_df.set_index(index_col) if index_col else mat_df.set_index(df_filt.index)
-
-# ---- Normalization / transforms ----
-X = mat_df.copy()
-if norm == "Log10(x+1)":
-    X = np.log10(X + 1.0)
-elif norm == "Row Z-score":
-    X = X.apply(lambda r: (r - r.mean()) / (r.std(ddof=0) if r.std(ddof=0) != 0 else 1), axis=1)
-elif norm == "Column Z-score":
-    X = (X - X.mean()) / X.std(ddof=0).replace(0, 1)
-elif norm == "Column Min-Max (0–1)":
-    X = (X - X.min()) / (X.max() - X.min()).replace(0, 1)
-
-# ---- Render heatmap (flipped orientation) ----
-st.subheader("Heatmap")
-
-# Clean matrix
-X = X.replace([np.inf, -np.inf], np.nan).dropna(how="all", axis=0).dropna(how="all", axis=1)
-
-if X.shape[0] == 0 or X.shape[1] == 0:
-    st.warning("No data to plot after filters/selection. Try broadening your filters or selecting more HMOs.")
-    st.stop()
-
-# Transpose so HMOs are on Y-axis and samples on X-axis
-X_flipped = X.T
-
-# Impute for clustering
-X_imp = X_flipped.apply(lambda c: c.fillna(c.median()), axis=0)
-
-# Determine if clustering is feasible
-eff_row_cluster = cluster and cluster_rows and (X_imp.shape[0] >= 2)
-eff_col_cluster = cluster and cluster_cols and (X_imp.shape[1] >= 2)
-
-if cluster and not (eff_row_cluster or eff_col_cluster):
-    st.info("Clustering disabled automatically (need ≥2 rows and/or ≥2 columns). Rendering plain heatmap instead.")
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    sns.heatmap(X_flipped, cmap="viridis", ax=ax)
-    ax.set_xlabel(index_col or "Samples")
-    ax.set_ylabel("HMOs (µg/mL)" if norm == "None" else f"HMOs (transformed: {norm})")
-    st.pyplot(fig, clear_figure=True)
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
-    st.download_button("Download heatmap (PNG)", data=buf.getvalue(), file_name="hmo_heatmap_flipped.png", mime="image/png")
-    plt.close(fig)
-else:
-    g = sns.clustermap(
-        X_imp,
-        method="average",
-        metric="euclidean",
-        col_cluster=eff_col_cluster,
-        row_cluster=eff_row_cluster,
-        cmap="viridis",
-        figsize=(fig_w, fig_h)
+    all_days = (
+        hmo[PPDAY_COL]
+        .dropna()
+        .astype(int)
+        .sort_values()
+        .unique()
+        .tolist()
     )
-    # The clustermap labels stay consistent (rows = HMOs, columns = samples)
-    st.pyplot(g.fig, clear_figure=True)
+    days_selected = st.multiselect(
+        "PP day (choose one or more)",
+        options=all_days,
+        default=all_days
+    )
 
-    buf = io.BytesIO()
-    g.fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
-    st.download_button("Download heatmap (PNG)", data=buf.getvalue(), file_name="hmo_heatmap_flipped.png", mime="image/png")
-    plt.close(g.fig)
+    # IMPORTANT: The label string here is what we compare below
+    view_mode = st.radio(
+        "View Mode:",
+        ["Concentration (ug/mL)", "Relative Abundance (%)"],
+        horizontal=False
+    )
 
+
+
+# =================
+# 4) Apply filters
+# =================
+filt = hmo.copy()
+
+if sec_label == "Secretor":
+    filt = filt[filt[SECRETOR_COL] == 1]
+elif sec_label == "Non-secretor":
+    filt = filt[filt[SECRETOR_COL] == 0]
+
+if days_selected and len(days_selected) < len(all_days):
+    filt = filt[filt[PPDAY_COL].isin(days_selected)]
+
+if filt.empty:
+    st.warning("No rows after filtering. Try a different combination.")
+    st.stop()
+
+st.caption(
+    f"Showing **{len(filt)}** samples "
+    f"({len(np.unique(filt[PARTICIPANT_COL])) if PARTICIPANT_COL in filt.columns else 'n/a'} participants)"
+)
+
+
+
+
+# ===================================================
+# 5) Choose columns to plot (based on the view toggle)
+# ===================================================
+# Build valid lists of column NAMES that are present after filtering
+hmo_cols_ug  = [c for c in UG_ALL  if c in filt.columns]   # exclude SUM by design
+hmo_cols_pct = [c for c in PCT_ALL if c in filt.columns]   # exclude SUM by design
+
+# Match the *exact* radio label used above
+view_is_ug = (view_mode == "Concentration (ug/mL)")
+
+if view_is_ug:
+    value_cols = hmo_cols_ug
+    VALUE_COL  = "Concentration (µg/mL)"
+else:
+    value_cols = hmo_cols_pct
+    VALUE_COL  = "Relative composition (%)"
+
+if not value_cols:
+    st.error("No HMO columns available for the selected view.")
+    st.stop()
+
+# Make selected columns numeric and non-negative
+for c in value_cols:
+    filt[c] = pd.to_numeric(filt[c], errors="coerce")
+
+# If % data look like proportions (0–1), convert to %
+if not view_is_ug:
+    mx = filt[value_cols].to_numpy(dtype=float)
+    mx = np.nanmax(mx) if mx.size else np.nan
+    if pd.notna(mx) and mx <= 1.5:
+        filt[value_cols] = filt[value_cols] * 100.0
+
+
+
+
+
+
+# ======================================
+# 6) Long format + x-axis sort by PP day
+# ======================================
+wide = filt[[ID_COL] + value_cols].copy()
+
+long = wide.melt(
+    id_vars=ID_COL,
+    value_vars=value_cols,
+    var_name="HMO",
+    value_name=VALUE_COL
+)
+long[VALUE_COL] = pd.to_numeric(long[VALUE_COL], errors="coerce").clip(lower=0)
+long["HMO"] = pd.Categorical(long["HMO"], categories=value_cols, ordered=True)
+
+# Sort x by PP day (then Sample Name) if available
+if PPDAY_COL in filt.columns:
+    order_df = (
+        filt[[ID_COL, PPDAY_COL]]
+        .dropna()
+        .sort_values([PPDAY_COL, ID_COL])
+    )
+    x_order = order_df[ID_COL].tolist()
+else:
+    x_order = long[ID_COL].drop_duplicates().tolist()
+
+
+
+
+
+# =================
+# 7) Draw the chart
+# =================
+chart = (
+    alt.Chart(long)
+    .mark_bar()
+    .encode(
+        x=alt.X(f"{ID_COL}:N", sort=x_order, title="Sample"),
+        y=alt.Y(f"{VALUE_COL}:Q", stack="zero", title=VALUE_COL),
+        color=alt.Color("HMO:N", legend=alt.Legend(title="HMO")),
+        tooltip=[ID_COL, "HMO", VALUE_COL]
+    )
+    .properties(height=450)
+    .interactive()
+)
+
+st.altair_chart(chart, use_container_width=True)
+
+
+
+
+
+
+
+# --- Additional chart using the same filtered data ---
+
+st.markdown(f"### Average HMO {'Concentration' if view_is_ug else 'Relative Abundance'} by PP day")
+
+# Calculate averages per day
+avg_by_day = (
+    filt.groupby(PPDAY_COL)[value_cols]  #active list of columns ug/mL or %
+    .mean()
+    .reset_index()
+    .melt(id_vars=PPDAY_COL, var_name="HMO", value_name=VALUE_COL)
+)
+
+avg_chart = (
+    alt.Chart(avg_by_day)
+    .mark_bar()
+    .encode(
+        x=alt.X(f"{PPDAY_COL}:O", title="PP day"),
+        y=alt.Y(f"{VALUE_COL}:Q", title=VALUE_COL),
+        color=alt.Color("HMO:N", legend=alt.Legend(title="HMO")),
+        tooltip=[PPDAY_COL, "HMO", VALUE_COL]
+    )
+    .properties(height=400)
+    .interactive()
+)
+
+st.altair_chart(avg_chart, use_container_width=True)
+
+
+
+# --- Additional chart using the same filtered data ---
+
+# Define fixed colors for PP days (consistent across filtering)
+PPDAY_COLORS = {
+    1: "#4E79A7",  # blue
+    2: "#F28E2B",  # orange
+    3: "#E15759",  # red
+    4: "#76B7B2",  # teal
+    5: "#59A14F",  # green
+    6: "#EDC948",  # yellow
+}
+
+# --- Optional: Total HMO (SUM) chart ---
+
+if UG_SUM and UG_SUM in filt.columns:
+    st.markdown("### Total HMO Concentration per Sample")
+
+    # Basic chart of total HMO per sample
+    total_chart = (
+        alt.Chart(filt)
+        .mark_bar()
+        .encode(
+            x=alt.X(f"{ID_COL}:N", sort=x_order, title="Sample"),
+            y=alt.Y(f"{UG_SUM}:Q", title="Total HMO (µg/mL)"),
+            color=alt.Color(
+                f"{PPDAY_COL}:N",
+                title="PP day",
+                scale=alt.Scale(
+                    domain=list(PPDAY_COLORS.keys()),
+                    range=list(PPDAY_COLORS.values())
+                )
+            ),
+            tooltip=[ID_COL, PARTICIPANT_COL, PPDAY_COL, UG_SUM]
+        )
+        .properties(height=400)
+        .interactive()
+)
+
+    st.altair_chart(total_chart, use_container_width=True)
+
+
+
+
+
+
+
+st.markdown("### HMO distribution by secretor status")
+
+# Prepare long-form data for boxplot
+box_data = filt.melt(
+    id_vars=SECRETOR_COL,
+    value_vars=value_cols,
+    var_name="HMO",
+    value_name=VALUE_COL
+)
+
+# Optional: make secretor numeric values human-readable strings
+box_data["Secretor Group"] = box_data[SECRETOR_COL].map({1: "Secretor", 0: "Non-secretor"})
+
+# Build the chart
+box_chart = (
+    alt.Chart(box_data)
+    .mark_boxplot(outliers=True)
+    .encode(
+        x=alt.X("HMO:N", title="HMO", sort=value_cols),
+        y=alt.Y(f"{VALUE_COL}:Q", title=VALUE_COL),
+        color=alt.Color(
+            "Secretor Group:N",
+            title="Secretor status",
+            scale=alt.Scale(domain=["Non-secretor", "Secretor"],
+                            range=["#E15759", "#4E79A7"])
+        )
+    )
+    .properties(height=400)
+    .interactive()
+)
+
+st.altair_chart(box_chart, use_container_width=True)

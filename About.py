@@ -23,19 +23,21 @@ hmo = pd.read_excel('Cleaned Data/HMO/hmo_data_oxford.xlsx')
 # Make sure PP_day_num is numeric
 hmo["PP_day_num"] = pd.to_numeric(hmo["PP_day_num"], errors="coerce")
 
+
 # Define categories
-n_colostrum = hmo[hmo["PP_day_num"].between(1, 5, inclusive="both")].shape[0]
+n_colostrum = hmo[hmo["PP_day_num"].between(1, 4, inclusive="both")].shape[0]
+n_transition = (hmo["PP_day_num"] == 5).sum()
 n_mature = (hmo["PP_day_num"] == 6).sum()
 
 
 # Create 3 equal-width columns for layout (you can change the number)
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 
 # Show the unique participant count as a card
 with col1:
     st.metric(
         label="Unique Participants",
-        value=int(df['Participant ID'].nunique())
+        value=int(hmo['Participant ID'].nunique())
    )  
 with col2:
     st.metric(
@@ -43,11 +45,14 @@ with col2:
         value=int(hmo.shape[0])
    )  
 with col3:
-    st.metric("Colostrum Samples (Day 1-5)", int(n_colostrum))
+    st.metric("Colostrum Samples (Day 1-4)", int(n_colostrum))
 with col4:
+    st.metric("Transitional Milk Samples (Day 5)", int(n_transition))
+with col5:
     st.metric("Mature Milk Samples (Day 6)", int(n_mature))
 
 st.divider()
+
 
 
 
