@@ -859,9 +859,17 @@ counts = (
 counts.columns = ["PP_day_num", "Count"]
 
 # --- Categorize colostrum vs mature ---
-counts["MilkType"] = counts["PP_day_num"].apply(
-    lambda x: "Colostrum" if x <= 5 else "Mature"
-)
+def classify_milk(day):
+    if day <= 4:
+        return "Colostrum"
+    elif day == 5:
+        return "Transitional"
+    elif day == 6:
+        return "Mature (24+ days)"
+    else:
+        return "Other"
+
+counts["MilkType"] = counts["PP_day_num"].apply(classify_milk)
 
 # --- Bar chart ---
 fig = px.bar(
@@ -871,11 +879,16 @@ fig = px.bar(
     color="MilkType",
     text="Count",
     color_discrete_map={
-        "Colostrum": "#7C93D8",  # soft blue
-        "Mature": "#F2A65A"      # warm orange
+        "Colostrum": "#7C93D8",     # soft blue
+        "Transitional": "#F9D71C",  # yellow
+        "Mature (24+ days)": "#F2A65A"         # warm orange
     },
-    labels={"PP_day_num": "Postpartum Day", "Count": "Count", "MilkType": "Milk Type"},
-    title="Milk Sample Collection Distribution",
+    labels={
+        "PP_day_num": "Postpartum Day",
+        "Count": "Sample Count",
+        "MilkType": "Milk Type"
+    },
+    title="Milk Sample Collection Distribution"
 )
 
 fig.update_traces(
@@ -891,13 +904,19 @@ fig.update_layout(
         tickmode="array",
         tickvals=counts["PP_day_num"],
         ticktext=[f"{int(x)}" for x in counts["PP_day_num"]],
-        title="PP Day Number (1–5 = Colostrum, 6 = Mature)"
+        title="Milk Collection Day (6 = Mature (24+ days of Lactation))"
     ),
     legend_title_text="Milk Type",
     margin=dict(l=10, r=10, t=50, b=10)
 )
 
 st.plotly_chart(fig, use_container_width=True)
+
+
+
+
+
+
 
 
 
@@ -977,39 +996,5 @@ with k2:
         label="Participants with ≥3 milk collection days (1–6)",
         value=str(n_3plus)
     )
-
-
-
-# --- Cupsize bar chart (counts from hmo) ---
-cup_counts = (
-    df["Cupsize"]
-    .fillna("Missing")
-    .astype(str)
-    .str.strip()
-    .value_counts()
-    .reset_index()
-)
-cup_counts.columns = ["Cupsize", "Count"]
-
-fig = px.bar(
-    cup_counts.sort_values("Count", ascending=False),
-    x="Cupsize",
-    y="Count",
-    text="Count",
-    color="Cupsize",
-    color_discrete_sequence=px.colors.qualitative.Pastel,
-    title="Maternal Cup Size Change",
-    labels={"Cupsize": "Cup Size", "Count": "Count"},
-)
-
-fig.update_traces(textposition="outside")
-fig.update_layout(
-    height=400,
-    showlegend=False,
-    margin=dict(l=10, r=10, t=50, b=10),
-    xaxis_tickangle=-25,
-)
-
-st.plotly_chart(fig, use_container_width=True)
 
 
