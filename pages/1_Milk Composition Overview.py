@@ -16,7 +16,7 @@ import altair as alt
 st.set_page_config(page_title="Milk Composition Overview", layout="wide")
 st.title(' Milk Composition')
 
-hmo = pd.read_excel("/Users/kspann/Desktop/Oxford/Cleaned Data/HMO/hmo_data_oxford.xlsx")
+hmo = pd.read_excel("Cleaned Data/HMO/hmo_data_oxford.xlsx")
 
 # Define categories
 n_colostrum = hmo[hmo["PP_day_num"].between(1, 4, inclusive="both")].shape[0]

@@ -17,7 +17,7 @@ st.set_page_config(page_title="Oxford Dashboard", layout="wide", initial_sidebar
 
 
 # load metadata overview
-df = pd.read_excel('/Users/kspann/Desktop/Oxford/Cleaned Data/Metadata/metadata_overview_oxford.xlsx')
+df = pd.read_excel('Cleaned Data/Metadata/metadata_overview_oxford.xlsx')
 hmo = pd.read_excel('Cleaned Data/HMO/hmo_data_oxford.xlsx')
 
 # Make sure PP_day_num is numeric
