@@ -5,3 +5,6 @@ plotly
 scipy
 statsmodels
 seaborn
+openpyxl>=3.1
+pandas
+streamlit
